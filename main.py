@@ -1,10 +1,10 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from supabase import create_client, Client
 from datetime import datetime
 import os
 import base64
+import traceback
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -93,9 +93,14 @@ async def send_message(request: Request):
         now = datetime.utcnow().isoformat()
         insert_data = {"text": text, "sender": sender, "timestamp": now, "created_at": now}
         response = supabase.table("private_chat_messages").insert(insert_data).execute()
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Insert returned no data")
         return response.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save message: {str(e)}")
+        error_detail = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 @app.delete("/api/chat/clear")
 async def clear_chat(request: Request):

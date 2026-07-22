@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from supabase import create_client, Client
 from datetime import datetime
 import os
@@ -71,7 +72,10 @@ async def get_messages(request: Request):
     user = verify_token(request)
     try:
         response = supabase.table("private_chat_messages").select("*").order("created_at", desc=False).execute()
-        return response.data
+        return JSONResponse(
+            content=response.data,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 

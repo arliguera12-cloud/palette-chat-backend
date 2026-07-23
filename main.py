@@ -8,12 +8,18 @@ import base64
 import traceback
 import uuid
 from dotenv import load_dotenv
+from pywebpush import webpush, WebPushException
+import json
 
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
+VAPID_EMAIL = os.getenv("VAPID_EMAIL", "mailto:despachoyn@gmail.com")
 
 VALID_USERS = {
     "n": os.getenv("CODE_N", "1111"),
@@ -142,6 +148,12 @@ async def send_message(request: Request):
             except:
                 new_msg["signed_url"] = None
 
+        # Notificar al otro usuario
+        other = "y" if sender == "n" else "n"
+        try:
+            send_push_notification(other, text or "")
+        except:
+            pass
         return new_msg
     except HTTPException:
         raise
@@ -262,6 +274,57 @@ async def clear_chat(request: Request):
         return {"status": "cleared", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Clear failed: {str(e)}")
+
+@app.post("/api/push/subscribe")
+async def subscribe_push(request: Request):
+    user = verify_token(request)
+    body = await request.json()
+    subscription = body.get("subscription")
+    if not subscription:
+        raise HTTPException(status_code=400, detail="No subscription provided")
+    try:
+        supabase.table("push_subscriptions").upsert({
+            "user_id": user,
+            "subscription": subscription,
+            "updated_at": datetime.utcnow().isoformat()
+        }, on_conflict="user_id").execute()
+        return {"status": "subscribed", "user": user}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/push/vapid-key")
+async def get_vapid_key():
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+def send_push_notification(user_id: str, text: str):
+    try:
+        result = supabase.table("push_subscriptions").select("subscription").eq("user_id", user_id).execute()
+        if not result.data:
+            return
+        subscription = result.data[0]["subscription"]
+        if user_id == "y":
+            payload = {
+                "title": "Palette Creator",
+                "body": "Nueva paleta disponible",
+                "tag": "palette-update",
+                "url": "/silent"
+            }
+        else:
+            preview = text[:60] + "..." if text and len(text) > 60 else (text or "Archivo adjunto")
+            payload = {
+                "title": "Privado",
+                "body": preview,
+                "tag": "chat-message",
+                "url": "https://palette-chat-frontend.vercel.app"
+            }
+        webpush(
+            subscription_info=subscription,
+            data=json.dumps(payload),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_EMAIL}
+        )
+    except Exception as ex:
+        print(f"Push error for {user_id}: {ex}")
 
 @app.get("/")
 async def root():
